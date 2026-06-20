@@ -60,7 +60,11 @@ export default function Page() {
       const token = data.session?.access_token;
       const headers = new Headers(init.headers);
       if (token) headers.set("Authorization", `Bearer ${token}`);
-      if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      // Never force JSON on FormData/Blob — it stomps the multipart boundary and
+      // breaks voice upload (the V1 bug). Only set JSON for plain string bodies.
+      const isMultipart = init.body instanceof FormData || init.body instanceof Blob;
+      if (init.body && !isMultipart && !headers.has("Content-Type"))
+        headers.set("Content-Type", "application/json");
       return fetch(path, { ...init, headers });
     },
     [supabase],
@@ -176,6 +180,18 @@ export default function Page() {
     [authedFetch, activeTeamId],
   );
 
+  const transcribe = useCallback(
+    async (blob: Blob, ext: string): Promise<string> => {
+      const form = new FormData();
+      form.append("audio", blob, `update.${ext}`);
+      const res = await authedFetch("/api/transcribe", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.text) throw new Error(data?.error ?? "Transcription failed.");
+      return data.text as string;
+    },
+    [authedFetch],
+  );
+
   const undo = useCallback(
     async (eventId: string) => {
       if (!activeTeamId) return;
@@ -267,7 +283,13 @@ export default function Page() {
         </div>
       </header>
 
-      <Composer onCapture={capture} pending={pending} recorded={recorded} onUndo={undo} />
+      <Composer
+        onCapture={capture}
+        pending={pending}
+        recorded={recorded}
+        onUndo={undo}
+        transcribe={transcribe}
+      />
 
       <nav className="v2-lenses">
         {(["mine", "team", "missing"] as Lens[]).map((l) => (
@@ -294,14 +316,60 @@ function Composer({
   pending,
   recorded,
   onUndo,
+  transcribe,
 }: {
   onCapture: (t: string) => void;
   pending: { text: string; status: "interpreting" | "error" } | null;
   recorded: LatticeEvent[];
   onUndo: (id: string) => void;
+  transcribe: (blob: Blob, ext: string) => Promise<string>;
 }) {
   const [text, setText] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const recordedEvents = recorded.filter((e) => e.kind !== "retraction" && e.entity_id);
+
+  async function startVoice() {
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) chunksRef.current.push(ev.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const mime = recorder.mimeType || "audio/webm";
+        const ext = mime.includes("mp4") ? "mp4" : mime.includes("ogg") ? "ogg" : "webm";
+        const blob = new Blob(chunksRef.current, { type: mime });
+        if (blob.size === 0) return;
+        setVoiceBusy(true);
+        try {
+          const t = await transcribe(blob, ext);
+          setText((cur) => (cur ? `${cur} ${t}` : t));
+        } catch (err) {
+          setVoiceError(err instanceof Error ? err.message : "Couldn’t transcribe that.");
+        } finally {
+          setVoiceBusy(false);
+        }
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      setVoiceError("Mic access denied or unavailable.");
+      setRecording(false);
+    }
+  }
+
+  function stopVoice() {
+    recorderRef.current?.stop();
+    setRecording(false);
+  }
 
   return (
     <section className="v2-capture">
@@ -318,10 +386,20 @@ function Composer({
           placeholder="What happened? e.g. “Priya’s blocked on the vendor API, demo’s now Friday”"
           aria-label="Tell Lattice what happened"
         />
+        <button
+          type="button"
+          className={`v2-mic ${recording ? "recording" : ""}`}
+          onClick={() => (recording ? stopVoice() : startVoice())}
+          disabled={voiceBusy}
+          aria-label={recording ? "Stop recording" : "Record voice"}
+        >
+          {voiceBusy ? "…" : recording ? "Stop" : "Speak"}
+        </button>
         <button className="v2-primary" type="submit">
           Tell
         </button>
       </form>
+      {voiceError && <div className="v2-pending error">{voiceError}</div>}
 
       {pending && (
         <div className={`v2-pending ${pending.status}`}>

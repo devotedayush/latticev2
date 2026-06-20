@@ -1314,3 +1314,34 @@ textarea {
   color: var(--bg);
   cursor: pointer;
 }
+
+/* voice */
+.v2-mic {
+  font: inherit;
+  font-weight: 500;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.v2-mic:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.v2-mic.recording {
+  background: var(--warn);
+  color: var(--bg);
+  border-color: var(--warn);
+  animation: v2-pulse 1.3s ease-in-out infinite;
+}
+@keyframes v2-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--warn-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
