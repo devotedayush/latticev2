@@ -1183,6 +1183,19 @@ textarea {
 .v2-card.request { border-left-color: var(--cool); }
 .v2-card.reminder { border-left-color: var(--warm); }
 .v2-card.shift { border-left-color: var(--shift); }
+.v2-card.just-updated {
+  animation: v2-landed 2s ease-out;
+}
+@keyframes v2-landed {
+  0% {
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  100% {
+    background: var(--surface);
+    box-shadow: none;
+  }
+}
 .v2-card-top {
   display: flex;
   justify-content: space-between;

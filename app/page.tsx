@@ -32,6 +32,28 @@ const LENS_LABEL: Record<Lens, string> = {
 
 type TeamSummary = { id: string; name: string; role?: "owner" | "admin" | "member" };
 
+type PatchPayload = {
+  eventType: "INSERT" | "UPDATE" | "DELETE";
+  new?: Record<string, unknown>;
+  old?: Record<string, unknown>;
+};
+
+// Apply a single realtime change to the local snapshot — upsert on INSERT/UPDATE,
+// remove on DELETE. deriveView re-sorts per lens, so insertion order is irrelevant.
+function patchEntities(cur: Entity[], p: PatchPayload): Entity[] {
+  if (p.eventType === "DELETE") {
+    const id = (p.old as { id?: string } | undefined)?.id;
+    return id ? cur.filter((e) => e.id !== id) : cur;
+  }
+  const row = p.new as Entity | undefined;
+  if (!row?.id) return cur;
+  const idx = cur.findIndex((e) => e.id === row.id);
+  if (idx === -1) return [row, ...cur];
+  const next = cur.slice();
+  next[idx] = row;
+  return next;
+}
+
 export default function Page() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [session, setSession] = useState<Session | null>(null);
@@ -52,7 +74,7 @@ export default function Page() {
   const [pending, setPending] = useState<{ text: string; status: "interpreting" | "error" } | null>(
     null,
   );
-  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [updatedIds, setUpdatedIds] = useState<Set<string>>(() => new Set());
 
   const authedFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -69,6 +91,18 @@ export default function Page() {
     },
     [supabase],
   );
+
+  // brief highlight when a row changes via realtime
+  const flash = useCallback((id: string) => {
+    setUpdatedIds((s) => new Set(s).add(id));
+    setTimeout(() => {
+      setUpdatedIds((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }, 2000);
+  }, []);
 
   // ---- auth ----
   useEffect(() => {
@@ -138,16 +172,20 @@ export default function Page() {
           setMembers((data as { name: string | null }[]).map((r) => r.name ?? "").filter(Boolean));
       });
 
-    loadEntities(activeTeamId);
+    loadEntities(activeTeamId); // one initial snapshot; realtime patches from here
 
+    // TRUE PATCHING: subscribe to the folded `entities` snapshot. Each message
+    // carries the changed row — apply it in place; no full re-pull.
     const channel = supabase
-      .channel(`lattice-${activeTeamId}`)
+      .channel(`lattice-entities-${activeTeamId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "events", filter: `team_space_id=eq.${activeTeamId}` },
-        () => {
-          if (refetchTimer.current) clearTimeout(refetchTimer.current);
-          refetchTimer.current = setTimeout(() => loadEntities(activeTeamId), 300);
+        { event: "*", schema: "public", table: "entities", filter: `team_space_id=eq.${activeTeamId}` },
+        (payload) => {
+          const p = payload as unknown as PatchPayload;
+          setEntities((cur) => patchEntities(cur, p));
+          const id = (p.new as { id?: string } | undefined)?.id ?? (p.old as { id?: string } | undefined)?.id;
+          if (id) flash(id);
         },
       )
       .subscribe();
@@ -156,7 +194,7 @@ export default function Page() {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [supabase, session, activeTeamId, loadEntities]);
+  }, [supabase, session, activeTeamId, loadEntities, flash]);
 
   // ---- capture (optimistic echo, reconcile on response) ----
   const capture = useCallback(
@@ -252,7 +290,7 @@ export default function Page() {
     return deriveView(entities, viewer, lens);
   }, [entities, session, me.name, me.role, lens]);
 
-  const actions: CardActions = { members, canMutate, onAction: entityAction };
+  const actions: CardActions = { members, canMutate, onAction: entityAction, recent: updatedIds };
 
   // ---- render gates ----
   if (checkingAuth) return <div className="centered">Loading…</div>;
@@ -449,6 +487,7 @@ type CardActions = {
   members: string[];
   canMutate: (e: Entity) => boolean;
   onAction: (id: string, action: string, extra?: Record<string, unknown>) => void;
+  recent: Set<string>;
 };
 
 const CLOSED_STATUS = new Set(["done", "resolved", "dropped", "declined"]);
@@ -463,7 +502,7 @@ function EntityCard({ e, actions }: { e: Entity; actions?: CardActions }) {
   const isCommitmentish = e.type === "promise" || e.type === "request";
 
   return (
-    <article className={`v2-card ${e.type}`}>
+    <article className={`v2-card ${e.type} ${actions?.recent?.has(e.id) ? "just-updated" : ""}`}>
       <div className="v2-card-top">
         <span className="v2-type">{TYPE_LABEL[e.type]}</span>
         {e.owner ? (
