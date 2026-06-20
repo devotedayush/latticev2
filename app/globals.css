@@ -1260,3 +1260,57 @@ textarea {
   color: var(--warn);
   font-size: 0.84rem;
 }
+
+/* entity actions */
+.v2-done {
+  text-transform: capitalize;
+  color: var(--accent);
+  font-weight: 550;
+}
+.v2-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.v2-actions button {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+}
+.v2-actions button:hover {
+  background: var(--bg-soft);
+}
+.v2-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.v2-editor input,
+.v2-editor select {
+  font: inherit;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+.v2-editor button {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: none;
+  background: var(--ink);
+  color: var(--bg);
+  cursor: pointer;
+}

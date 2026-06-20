@@ -238,6 +238,96 @@ export async function retractEvent(
   return fetchEntities(supabase, args.teamSpaceId);
 }
 
+// ----------------------------------------------------------------------------
+// Per-entity mutations — each is a reversible event on the stream, not a direct
+// row write. The DB trigger re-folds the entity. Mirrors V1's commitment actions.
+// ----------------------------------------------------------------------------
+export type EntityActionKind =
+  | "complete"
+  | "resolve"
+  | "set_due"
+  | "set_owner"
+  | "defer"
+  | "decline"
+  | "drop"
+  | "set_confidence";
+
+export async function applyEntityAction(
+  supabase: SupabaseClient,
+  args: {
+    teamSpaceId: string;
+    entityId: string;
+    entityType: FieldObjectType | null;
+    action: EntityActionKind;
+    actorName: string | null;
+    actorUserId: string | null;
+    dueAt?: string | null;
+    owner?: string | null;
+    deferredUntil?: string | null;
+    reason?: string | null;
+    confidence?: number | null;
+  },
+): Promise<Entity[]> {
+  let kind: EventKind;
+  let after: EntityPatch | null = {};
+  let confidence: number | null = null;
+
+  switch (args.action) {
+    case "complete":
+      kind = "status_change";
+      after = { status: "done", pulse: "clear" };
+      confidence = 1;
+      break;
+    case "resolve":
+      kind = "blocker_resolved";
+      after = { status: "resolved", pulse: "clear" };
+      break;
+    case "set_due":
+      kind = "due_change";
+      after = { due_at: args.dueAt ?? null };
+      break;
+    case "set_owner":
+      kind = "owner_change";
+      after = { owner: args.owner ?? null };
+      break;
+    case "defer":
+      kind = "deferral";
+      after = { deferred_until: args.deferredUntil ?? null, decline_reason: args.reason ?? null, pulse: "stale" };
+      break;
+    case "decline":
+      kind = "decline";
+      after = { status: "dropped", decline_reason: args.reason ?? null, pulse: "quiet" };
+      break;
+    case "drop":
+      kind = "scope_change";
+      after = { status: "dropped", pulse: "quiet" };
+      break;
+    case "set_confidence":
+      kind = "confidence_change";
+      after = null;
+      confidence = typeof args.confidence === "number" ? args.confidence : null;
+      break;
+    default:
+      throw new Error("unknown action");
+  }
+
+  const { error } = await supabase.from("events").insert({
+    id: genId("evt"),
+    team_space_id: args.teamSpaceId,
+    actor_user_id: args.actorUserId,
+    actor_name: args.actorName,
+    kind,
+    entity_id: args.entityId,
+    entity_type: args.entityType,
+    after,
+    confidence,
+    source: "manual",
+  });
+  if (error) throw new Error(`action insert failed: ${error.message}`);
+
+  return fetchEntities(supabase, args.teamSpaceId);
+}
+
 export async function fetchEntities(
   supabase: SupabaseClient,
   teamSpaceId: string,

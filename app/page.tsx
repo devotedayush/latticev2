@@ -43,6 +43,7 @@ export default function Page() {
     name: "",
     role: "member",
   });
+  const [members, setMembers] = useState<string[]>([]);
   const [needsTeam, setNeedsTeam] = useState(false);
 
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -124,6 +125,15 @@ export default function Page() {
         if (!cancelled && data) setMe({ name: data.name ?? "", role: data.role ?? "member" });
       });
 
+    supabase
+      .from("team_members")
+      .select("name")
+      .eq("team_space_id", activeTeamId)
+      .then(({ data }) => {
+        if (!cancelled && data)
+          setMembers((data as { name: string | null }[]).map((r) => r.name ?? "").filter(Boolean));
+      });
+
     loadEntities(activeTeamId);
 
     const channel = supabase
@@ -182,6 +192,29 @@ export default function Page() {
     [authedFetch, activeTeamId],
   );
 
+  const entityAction = useCallback(
+    async (id: string, action: string, extra: Record<string, unknown> = {}) => {
+      if (!activeTeamId) return;
+      const res = await authedFetch("/api/v2/entity", {
+        method: "PATCH",
+        body: JSON.stringify({ id, action, teamId: activeTeamId, ...extra }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data) setEntities(data.entities ?? []);
+    },
+    [authedFetch, activeTeamId],
+  );
+
+  const canMutate = useCallback(
+    (e: Entity) => {
+      if (me.role === "owner" || me.role === "admin") return true;
+      return (
+        !!e.owner && !!me.name && e.owner.trim().toLowerCase() === me.name.trim().toLowerCase()
+      );
+    },
+    [me],
+  );
+
   const createTeam = useCallback(
     async (name: string) => {
       const res = await authedFetch("/api/v2/teams", {
@@ -202,6 +235,8 @@ export default function Page() {
     const viewer: Viewer = { userId: session?.user.id ?? "", memberName: me.name, role: me.role };
     return deriveView(entities, viewer, lens);
   }, [entities, session, me.name, me.role, lens]);
+
+  const actions: CardActions = { members, canMutate, onAction: entityAction };
 
   // ---- render gates ----
   if (checkingAuth) return <div className="centered">Loading…</div>;
@@ -243,9 +278,9 @@ export default function Page() {
       </nav>
 
       <main className="v2-main">
-        {view.lens === "mine" && <MyPlate view={view} meName={me.name} />}
-        {view.lens === "team" && <TeamLens view={view} />}
-        {view.lens === "missing" && <MissingLens view={view} />}
+        {view.lens === "mine" && <MyPlate view={view} meName={me.name} actions={actions} />}
+        {view.lens === "team" && <TeamLens view={view} actions={actions} />}
+        {view.lens === "missing" && <MissingLens view={view} actions={actions} />}
       </main>
     </div>
   );
@@ -332,8 +367,23 @@ function conflictValue(v: unknown): string {
   return v;
 }
 
-function EntityCard({ e }: { e: Entity }) {
+type CardActions = {
+  members: string[];
+  canMutate: (e: Entity) => boolean;
+  onAction: (id: string, action: string, extra?: Record<string, unknown>) => void;
+};
+
+const CLOSED_STATUS = new Set(["done", "resolved", "dropped", "declined"]);
+const toIsoEod = (date: string): string => `${date}T23:59:00Z`;
+
+function EntityCard({ e, actions }: { e: Entity; actions?: CardActions }) {
   const due = fmtDue(e.due_at);
+  const [editing, setEditing] = useState<null | "due" | "owner" | "defer">(null);
+  const [dateVal, setDateVal] = useState("");
+  const open = !e.status || !CLOSED_STATUS.has(e.status);
+  const mutable = !!actions && actions.canMutate(e) && open;
+  const isCommitmentish = e.type === "promise" || e.type === "request";
+
   return (
     <article className={`v2-card ${e.type}`}>
       <div className="v2-card-top">
@@ -348,6 +398,7 @@ function EntityCard({ e }: { e: Entity }) {
       {e.detail && <div className="v2-detail">{e.detail}</div>}
 
       <div className="v2-meta">
+        {!open && <span className="v2-done">{e.status}</span>}
         {due && <span className={due.late ? "v2-late" : ""}>due {due.text}</span>}
         {e.type === "promise" && (
           <span title="How likely this is to land by its date — not % done">
@@ -360,8 +411,92 @@ function EntityCard({ e }: { e: Entity }) {
       {e.conflict && (
         <div className="v2-conflict">
           Two claims on <b>{e.conflict.field === "due_at" ? "the date" : e.conflict.field}</b>:{" "}
-          {e.conflict.claims.map((c) => `${c.actor ?? "someone"} → ${conflictValue(c.value)}`).join("  ·  ")}{" "}
+          {e.conflict.claims
+            .map((c) => `${c.actor ?? "someone"} → ${conflictValue(c.value)}`)
+            .join("  ·  ")}{" "}
           — needs a decision.
+        </div>
+      )}
+
+      {mutable && actions && (
+        <div className="v2-actions">
+          {isCommitmentish && (
+            <button onClick={() => actions.onAction(e.id, "complete")}>Done</button>
+          )}
+          {e.type === "blocker" && (
+            <button onClick={() => actions.onAction(e.id, "resolve")}>Resolved</button>
+          )}
+          <button onClick={() => setEditing(editing === "owner" ? null : "owner")}>Reassign</button>
+          {(isCommitmentish || e.type === "reminder") && (
+            <button onClick={() => setEditing(editing === "due" ? null : "due")}>Set due</button>
+          )}
+          {isCommitmentish && (
+            <button onClick={() => setEditing(editing === "defer" ? null : "defer")}>Can’t do</button>
+          )}
+          <button onClick={() => actions.onAction(e.id, "drop")}>Drop</button>
+        </div>
+      )}
+
+      {mutable && actions && editing === "owner" && (
+        <div className="v2-editor">
+          <select
+            defaultValue={e.owner ?? ""}
+            onChange={(ev) => {
+              actions.onAction(e.id, "set_owner", { owner: ev.target.value || null });
+              setEditing(null);
+            }}
+          >
+            <option value="">Unassign</option>
+            {actions.members.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {mutable && actions && editing === "due" && (
+        <div className="v2-editor">
+          <input type="date" value={dateVal} onChange={(ev) => setDateVal(ev.target.value)} />
+          <button
+            onClick={() => {
+              if (dateVal) {
+                actions.onAction(e.id, "set_due", { dueAt: toIsoEod(dateVal) });
+                setEditing(null);
+              }
+            }}
+          >
+            Save
+          </button>
+          <button
+            onClick={() => {
+              actions.onAction(e.id, "set_due", { dueAt: null });
+              setEditing(null);
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {mutable && actions && editing === "defer" && (
+        <div className="v2-editor">
+          <span>Snooze until</span>
+          <input type="date" value={dateVal} onChange={(ev) => setDateVal(ev.target.value)} />
+          <button
+            onClick={() => {
+              if (dateVal) {
+                actions.onAction(e.id, "defer", {
+                  deferredUntil: toIsoEod(dateVal),
+                  reason: "plan changed",
+                });
+                setEditing(null);
+              }
+            }}
+          >
+            Save
+          </button>
         </div>
       )}
     </article>
@@ -374,9 +509,11 @@ function EntityCard({ e }: { e: Entity }) {
 function MyPlate({
   view,
   meName,
+  actions,
 }: {
   view: Extract<ReturnType<typeof deriveView>, { lens: "mine" }>;
   meName: string;
+  actions: CardActions;
 }) {
   return (
     <div className="v2-lens-body">
@@ -398,14 +535,14 @@ function MyPlate({
       {view.owned.length === 0 ? (
         <p className="v2-empty">Nothing owed by you right now.</p>
       ) : (
-        view.owned.map((e) => <EntityCard key={e.id} e={e} />)
+        view.owned.map((e) => <EntityCard key={e.id} e={e} actions={actions} />)
       )}
 
       {view.owedToMe.length > 0 && (
         <>
           <h3 className="v2-section">Owed to you</h3>
           {view.owedToMe.map((e) => (
-            <EntityCard key={e.id} e={e} />
+            <EntityCard key={e.id} e={e} actions={actions} />
           ))}
         </>
       )}
@@ -413,7 +550,13 @@ function MyPlate({
   );
 }
 
-function TeamLens({ view }: { view: Extract<ReturnType<typeof deriveView>, { lens: "team" }> }) {
+function TeamLens({
+  view,
+  actions,
+}: {
+  view: Extract<ReturnType<typeof deriveView>, { lens: "team" }>;
+  actions: CardActions;
+}) {
   const order: FieldObjectType[] = [
     "blocker",
     "promise",
@@ -441,7 +584,7 @@ function TeamLens({ view }: { view: Extract<ReturnType<typeof deriveView>, { len
           <div key={t}>
             <h3 className="v2-section">{TYPE_LABEL[t]}</h3>
             {view.byType[t].map((e) => (
-              <EntityCard key={e.id} e={e} />
+              <EntityCard key={e.id} e={e} actions={actions} />
             ))}
           </div>
         ))}
@@ -450,26 +593,32 @@ function TeamLens({ view }: { view: Extract<ReturnType<typeof deriveView>, { len
   );
 }
 
-function MissingLens({ view }: { view: Extract<ReturnType<typeof deriveView>, { lens: "missing" }> }) {
+function MissingLens({
+  view,
+  actions,
+}: {
+  view: Extract<ReturnType<typeof deriveView>, { lens: "missing" }>;
+  actions: CardActions;
+}) {
   return (
     <div className="v2-lens-body">
       <h3 className="v2-section">Needs a decision</h3>
       {view.needsDecision.length === 0 ? (
         <p className="v2-empty">Nothing waiting on you to decide.</p>
       ) : (
-        view.needsDecision.map((e) => <EntityCard key={e.id} e={e} />)
+        view.needsDecision.map((e) => <EntityCard key={e.id} e={e} actions={actions} />)
       )}
 
       <h3 className="v2-section">At risk</h3>
       {view.atRisk.length === 0 ? (
         <p className="v2-empty">Nothing flagged at risk.</p>
       ) : (
-        view.atRisk.map((e) => <EntityCard key={e.id} e={e} />)
+        view.atRisk.map((e) => <EntityCard key={e.id} e={e} actions={actions} />)
       )}
 
       <h3 className="v2-section">Recently changed</h3>
       {view.changed.map((e) => (
-        <EntityCard key={e.id} e={e} />
+        <EntityCard key={e.id} e={e} actions={actions} />
       ))}
     </div>
   );
