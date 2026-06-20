@@ -1053,9 +1053,11 @@ textarea {
 .v2-capture form {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .v2-capture input {
-  flex: 1;
+  flex: 1 1 240px;
+  min-width: 0;
   font: inherit;
   padding: 12px 14px;
   border-radius: 12px;
@@ -1126,6 +1128,7 @@ textarea {
   display: flex;
   gap: 6px;
   margin: 8px 0 16px;
+  flex-wrap: wrap;
 }
 .v2-lens {
   font: inherit;
@@ -1219,6 +1222,7 @@ textarea {
 }
 .v2-title {
   font-weight: 500;
+  overflow-wrap: break-word;
 }
 .v2-detail {
   font-size: 0.86rem;
@@ -1356,5 +1360,35 @@ textarea {
   }
   50% {
     box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* ---- responsive: phones ---- */
+@media (max-width: 560px) {
+  .v2-shell {
+    padding: 16px 12px 72px;
+  }
+  .v2-top {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .v2-capture input {
+    flex-basis: 100%;
+  }
+  /* Speak + Tell share the row beneath a full-width input */
+  .v2-mic,
+  .v2-capture .v2-primary {
+    flex: 1 1 0;
+  }
+  .v2-lens {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+  .v2-card {
+    padding: 12px;
+  }
+  .v2-actions button,
+  .v2-editor {
+    flex: 1 1 auto;
   }
 }
