@@ -779,11 +779,33 @@ function AuthGate({
     }
   }
 
+  async function google() {
+    setErr(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    // on success the browser redirects to Google; onAuthStateChange handles the return
+    if (error) setErr(error.message);
+  }
+
   return (
     <div className="centered">
       <form className="v2-auth" onSubmit={submit}>
         <h1>Lattice</h1>
         <p className="v2-sub">Tell it what’s happening; it tracks who owes what and what’s slipping.</p>
+
+        <button type="button" className="v2-google" onClick={google}>
+          <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.1 0 24 0 14.6 0 6.4 5.4 2.5 13.2l7.9 6.1C12.2 13.2 17.6 9.5 24 9.5z" />
+            <path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.1 5.3-4.6 7l7.1 5.5c4.2-3.9 6.6-9.6 6.6-17z" />
+            <path fill="#FBBC05" d="M10.4 28.3c-.5-1.4-.8-2.9-.8-4.3s.3-3 .8-4.3l-7.9-6.1C.9 16.8 0 20.3 0 24s.9 7.2 2.5 10.4l7.9-6.1z" />
+            <path fill="#34A853" d="M24 48c6.1 0 11.3-2 15-5.5l-7.1-5.5c-2 1.3-4.6 2.1-7.9 2.1-6.4 0-11.8-3.7-13.6-9.8l-7.9 6.1C6.4 42.6 14.6 48 24 48z" />
+          </svg>
+          Continue with Google
+        </button>
+        <div className="v2-divider">or</div>
+
         {mode === "up" && (
           <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
         )}

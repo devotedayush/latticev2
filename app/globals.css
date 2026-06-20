@@ -1277,6 +1277,38 @@ textarea {
   color: var(--warn);
   font-size: 0.84rem;
 }
+.v2-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: inherit;
+  font-weight: 500;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.v2-google:hover {
+  background: var(--surface-soft);
+}
+.v2-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  gap: 10px;
+}
+.v2-divider::before,
+.v2-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 
 /* entity actions */
 .v2-done {
